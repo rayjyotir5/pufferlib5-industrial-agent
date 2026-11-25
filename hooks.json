@@ -1,0 +1,16 @@
+{
+  "pufferlib5-pre-train-gate": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./hooks/pre_train_gate.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
