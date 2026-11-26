@@ -16,11 +16,7 @@ Use this reference during **Phases 5 & 6** (`./puffer train` and `./puffer eval 
 
 ## 2. Automated Tuning, Asset Sizing (Protein) & Visualization (Constellation)
 - **Inline config overrides:** `./puffer train <env> --train.learning_rate=3e-4 --train.ent_coef=0.02 --train.gamma=0.998` (check exact flags in your checkout via `./puffer train --help`).
-- **Protein for hyperparameters *and* optimal asset sizing:**
-  - Use **Protein** (CARBS) to sweep LR, `ent_coef`, and $\gamma$ along the compute-cost vs. score Pareto frontier.
-  - When **asset counts** (e.g., number of AMRs `N`, chargers, or buffer slots) are *not* fixed inputs and you need the **minimum feasible count**, expose them as runtime env config parameters (backed by static `MAX_*` C arrays) and include them in the Protein search space **jointly** with PPO hyperparameters—preventing a small `N` from failing merely due to a bad learning rate.
-  - **Crucial objective guard:** Do *not* optimize raw throughput alone when sweeping `N`, or Protein will trivially pick `MAX_N`. Instead, score runs with a feasibility-gated / capex-penalized objective (e.g., reward hitting target OTIF with `stalls == 0` and `battery_deaths == 0`, minus a small cost per asset `N`) and read the exact `N` vs. OTIF Pareto frontier in **Constellation**.
-- **Constellation:** Visualize large multi-run sweeps (including asset count vs. throughput/stalls/min-SOC point clouds) and copy winning hyperparameter + asset configs directly.
+- **Protein sweeps & optimal asset sizing:** See [protein_sweeps.md](./protein_sweeps.md) for when to use (and not use) `./puffer sweep --sweep.method=protein`, choosing `log_normal` / `logit_normal` / `uniform_pow2` / `int_uniform` spaces, writing a capex-penalized `sweep_score` to avoid the `MAX_N` trap, and validating winning **Constellation** Pareto configs across multiple seeds.
 
 ## 3. Mandatory `./puffer eval latest` & Multi-Day Steady-State Audit
 

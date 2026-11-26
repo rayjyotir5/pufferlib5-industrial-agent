@@ -1,7 +1,7 @@
 {
   "name": "pufferlib5-industrial",
   "displayName": "PufferLib 5.0 Industrial Automation RL",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Designs, implements, verifies, and trains throughput-maximizing industrial automation environments (single cells, re-entrant lines, and multi-agent AMR fleets with finite buffers, changeovers, wear/PM, charging, and multi-day cycles) in PufferLib 5.0 C/CUDA.",
   "suggestedPrompts": [
     "Design a PufferLib 5.0 C environment for a multi-AMR corridor with charging and 5-pallet pickup buffers",

@@ -98,10 +98,10 @@ All programmatic verification lives in [scripts/audit_env.py](./scripts/audit_en
 - Run `audit_env.py check-baselines` (passing `--fastest-cycle-ticks`/`--horizon` and/or `--demand-ceiling`, `--collisions`, `--off-limits-intrusions`, and anti-suicide parameters when applicable).
 - If any baseline violates physical/demand bounds or produces collisions/deadlocks, **stop and fix `<env>.h` before touching CUDA**.
 
-### 5. GPU Build & PuffeRL Training
-- Compile `./build.sh <env> --cu` and run `./puffer train <env>`.
+### 5. GPU Build, PuffeRL Training & Protein Sweeps
+- Compile `./build.sh <env> --cu` and run a single baseline `./puffer train <env>` first (never sweep a broken or unverified env).
 - Monitor `SPS`, `explained_variance`, `clipfrac`, and `entropy` using [references/pufferl_diagnostics.md](./references/pufferl_diagnostics.md).
-- **When asset count (`N` AMRs, chargers, buffers) is not fixed and must be minimized:** expose asset counts as runtime env config parameters (using static `MAX_*` caps in C so no recompilation is required) and use **Protein** to sweep asset counts **jointly** with PPO hyperparameters (`learning_rate`, `ent_coef`, $\gamma$). Use a capex-aware OTIF sweep objective (or inspect the `N` vs. throughput/stalls Pareto frontier in **Constellation**) so a tight fleet isn't misjudged due to untuned PPO hyperparameters and Protein doesn't trivially max out `N`.
+- Once a single run learns cleanly—or whenever **asset counts** (`num_agents`, chargers, buffers) are not fixed inputs and must be minimized—read [references/protein_sweeps.md](./references/protein_sweeps.md) to configure a **Protein** sweep (`./puffer sweep`) with proper distributions (`log_normal`, `logit_normal`, `uniform_pow2`, `int_uniform`), a capex-penalized OTIF `sweep_score` (avoiding the `MAX_N` trap), and **Constellation** Pareto analysis.
 
 ### 6. Mandatory Policy & Multi-Day Steady-State Audit
 - Never trust healthy dashboard curves alone. Run `./puffer eval latest` and audit real traces and `Log` KPIs (`delivered_per_hr`, `stalled_station_mins`, `battery_deaths`, `min_soc`, `collisions`).

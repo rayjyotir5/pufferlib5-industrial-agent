@@ -79,7 +79,7 @@ def emit_decision(allow: bool, reason: str, is_claude: bool) -> int:
 
 
 def detect_gated_env(cmd: str) -> tuple[str | None, bool]:
-    """Detect `./build.sh <env> ... --cu` or `./puffer train <env>`.
+    """Detect `./build.sh <env> ... --cu`, `./puffer train <env>`, or `./puffer sweep <env>`.
 
     Returns (env_name_or_none, is_gated_command).
     """
@@ -87,7 +87,7 @@ def detect_gated_env(cmd: str) -> tuple[str | None, bool]:
     if m_build and re.search(r"(?:^|\s)--cu(?:\s|$)", m_build.group(2)):
         return m_build.group(1), True
 
-    m_train = re.search(r"(?:^|[;&|]\s*)\.?/?puffer\s+train(?:\s+([A-Za-z0-9_-]+))?", cmd)
+    m_train = re.search(r"(?:^|[;&|]\s*)\.?/?puffer\s+(?:train|sweep)(?:\s+([A-Za-z0-9_-]+))?", cmd)
     if m_train:
         env_name = m_train.group(1)
         if env_name and env_name.startswith("-"):

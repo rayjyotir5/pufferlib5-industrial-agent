@@ -1,23 +1,24 @@
-# PufferLib 5.0 Industrial Automation RL Agent Bundle (`v1.1.1`)
+# PufferLib 5.0 Industrial Automation RL Agent Bundle (`v1.2.0`)
 
-Portable plugin/customization kit that encodes industrial throughput MDP design (single cells, re-entrant lines, and multi-agent AMR fleets with multi-day charging), conservation & intake audits, PufferLib 5.0 C/CUDA memory and lifecycle invariants, automated static/baseline/anti-suicide auditing, a `PreToolUse` GPU-training safety gate, and PuffeRL training + multi-day evaluation diagnostics.
+Portable plugin/customization kit that encodes industrial throughput MDP design (single cells, re-entrant lines, and multi-agent AMR fleets with multi-day charging), conservation & intake audits, PufferLib 5.0 C/CUDA memory and lifecycle invariants, automated static/baseline/anti-suicide auditing, a `PreToolUse` GPU-training/sweep safety gate, and PuffeRL + Protein/Constellation diagnostics.
 
 ## What's Inside
 
 ```text
 pufferlib5-industrial-agent/
 ├── plugin.json                              # Plugin manifest
-├── hooks.json                               # PreToolUse gate blocking --cu / puffer train until CPU debug + audit pass
+├── hooks.json                               # PreToolUse gate blocking --cu / puffer train / puffer sweep until CPU debug + audit pass
 ├── rules/AGENTS.md                          # Always-on hard invariants
 ├── hooks/pre_train_gate.py                  # Hook script (Antigravity + Claude Code JSON contracts)
 └── skills/pufferlib5-industrial-env/
     ├── SKILL.md                             # 6-phase industrial RL + PufferLib 5.0 runbook
     ├── references/
-    │   ├── mdp_checklist.md                 # Markov state, reward, gamma & physics-ceiling guide
-    │   ├── c_env_template.md                # Generic industrial C env template (env.h + binding.c)
-    │   └── pufferl_diagnostics.md           # PuffeRL dashboard & ./puffer eval latest audit guide
+    │   ├── mdp_checklist.md                 # Conservation audit, intake questions, stepping matrix, reward & anti-suicide math
+    │   ├── c_env_template.md                # Single-cell & multi-agent lockstep macro-step C templates
+    │   ├── pufferl_diagnostics.md           # PuffeRL dashboard & multi-day ./puffer eval latest audit guide
+    │   └── protein_sweeps.md                # Protein (CARBS) sweeps, distribution selection, capex-penalized asset sizing & Constellation
     └── scripts/
-        └── audit_env.py                     # CLI static & baseline verification tool
+        └── audit_env.py                     # CLI static, baseline, collision & anti-suicide verification tool
 ```
 
 ## Installation by Agent CLI
