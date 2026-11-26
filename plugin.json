@@ -1,11 +1,11 @@
 {
   "name": "pufferlib5-industrial",
   "displayName": "PufferLib 5.0 Industrial Automation RL",
-  "version": "1.0.0",
-  "description": "Designs, implements, verifies, and trains throughput-maximizing industrial automation environments (machines, finite buffers, changeovers, wear/PM, re-entrant routing) in PufferLib 5.0 C/CUDA.",
+  "version": "1.1.0",
+  "description": "Designs, implements, verifies, and trains throughput-maximizing industrial automation environments (single cells, re-entrant lines, and multi-agent AMR fleets with finite buffers, changeovers, wear/PM, charging, and multi-day cycles) in PufferLib 5.0 C/CUDA.",
   "suggestedPrompts": [
-    "Design a PufferLib 5.0 C environment for a 2-machine re-entrant cell with changeovers and PM",
-    "Audit my ocean/cnc/ environment for silent PufferLib 5.0 buffer, RNG, and lifecycle bugs",
+    "Design a PufferLib 5.0 C environment for a multi-AMR corridor with charging and 5-pallet pickup buffers",
+    "Audit my ocean/<env>/ environment for silent PufferLib 5.0 buffer, RNG, lifecycle, and anti-suicide bugs",
     "Diagnose why my PuffeRL training run has clipfrac=0.68 and entropy collapsing to 0.01"
   ]
 }

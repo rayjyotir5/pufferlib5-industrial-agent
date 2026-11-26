@@ -1,8 +1,10 @@
-# PufferLib 5.0 Native C Industrial Environment Template
+# PufferLib 5.0 Native C Industrial Environment Templates
 
-Use this skeleton as a starting point for `ocean/<env>/<env>.h` and `ocean/<env>/binding.c`. Adapt the struct fields, transitions, and `binding.c` macro/registration calls to match the exact `vecenv.h` / `ocean/` template in your local PufferLib 5.0 checkout (inspect `ocean/squared/` or `ocean/target/` in your repo to confirm exact macro signatures).
+Choose **Pattern A** for short-horizon single-machine/cell environments, or **Pattern B** for multi-agent fleets / multi-hour shift-and-charging problems requiring macro-stepping over a deterministic 1-tick C physics kernel. Always inspect `ocean/squared/` or `ocean/target/` in your local PufferLib 5.0 checkout for exact `binding.c` / `vecenv.h` macro signatures.
 
-## Shared Dimensions & Layout (`factory.h`)
+---
+
+## Pattern A: Single-Machine 1-Tick Cell (`factory.h`)
 
 ```c
 #ifndef FACTORY_H
@@ -40,31 +42,27 @@ typedef struct {
 } Log;
 
 typedef struct {
-    // Required PufferLib 5.0 flat shared-buffer pointers (sliced by runtime)
     Log log;
     float* observations;
     int*   actions;
     float* rewards;
     float* terminals;
 
-    // Internal Markov state
     int mode;
     int timer;
     int current_job;     // 0=fast, 1=slow
     int setup_type;      // 0=fast, 1=slow (persisted across idle/PM)
     int tool_wear;       // 0..MAX_WEAR
-    int buf_fast;        // waiting Fast jobs
-    int buf_slow;        // waiting Slow jobs
+    int buf_fast;
+    int buf_slow;
 
-    // Rolling KPI counters (NEVER exposed in observations)
     int window_ticks;
     int window_parts;
     int window_changeovers;
     int window_pm;
     int window_breakdowns;
 
-    // Lock-free, CUDA-safe per-env PRNG state (seeded uniquely as base_seed + env_id)
-    uint32_t rng;
+    uint32_t rng;        // Per-env PRNG state (seeded uniquely: base_seed + env_id)
 } FactoryEnv;
 
 static inline uint32_t xorshift32(uint32_t* state) {
@@ -82,13 +80,10 @@ static inline float rand_uniform(uint32_t* state) {
 }
 
 static inline void write_observations(FactoryEnv* env) {
-    // 1. Explicitly clear all one-hot mode slots (PufferLib does NOT auto-zero buffers)
     for (int m = 0; m < NUM_MODES; m++) {
         env->observations[m] = 0.0f;
     }
     env->observations[env->mode] = 1.0f;
-
-    // 2. Write normalized [0, 1] Markov state features (indices 5..9 -> OBS_DIM = 10)
     env->observations[5] = (float)env->timer / (float)BREAK_TICKS;
     env->observations[6] = (float)env->setup_type;
     env->observations[7] = (float)env->tool_wear / (float)MAX_WEAR;
@@ -96,9 +91,7 @@ static inline void write_observations(FactoryEnv* env) {
     env->observations[9] = (float)env->buf_slow / (float)BUF_CAP;
 }
 
-// Internal reset helper — resets factory state & observations ONLY.
-// Does NOT touch env->rewards[0] or env->terminals[0] so auto-reset inside c_step
-// preserves the terminal flag and final step reward for PuffeRL.
+// Resets internal state & initial observations ONLY — preserves rewards/terminals on auto-reset.
 static inline void reset_internal_state(FactoryEnv* env) {
     env->mode = MODE_IDLE;
     env->timer = 0;
@@ -115,7 +108,6 @@ static inline void reset_internal_state(FactoryEnv* env) {
     write_observations(env);
 }
 
-// External reset entry point (called at env initialization with unique env->rng)
 static inline void c_reset(FactoryEnv* env) {
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0.0f;
@@ -123,11 +115,9 @@ static inline void c_reset(FactoryEnv* env) {
 }
 
 static inline void c_step(FactoryEnv* env) {
-    // 1. ALWAYS clear reward and terminal at the start of every tick
     env->rewards[0] = 0.0f;
     env->terminals[0] = 0.0f;
 
-    // 2. Apply policy action when idle (invalid actions are safe no-ops)
     int act = env->actions[0];
     if (env->mode == MODE_IDLE) {
         if (act == 1 && env->buf_fast > 0) {
@@ -159,7 +149,6 @@ static inline void c_step(FactoryEnv* env) {
         }
     }
 
-    // 3. Advance machine dynamics by 1 tick
     if (env->mode == MODE_SETUP) {
         env->timer--;
         if (env->timer <= 0) {
@@ -171,12 +160,10 @@ static inline void c_step(FactoryEnv* env) {
         env->timer--;
         env->tool_wear++;
         if (env->tool_wear >= MAX_WEAR) {
-            // Breakdown interrupts current job (explicitly documented rule)
             env->mode = MODE_BROKEN;
             env->timer = BREAK_TICKS;
             env->window_breakdowns++;
         } else if (env->timer <= 0) {
-            // Finished good exits -> pure +1.0 throughput reward
             env->rewards[0] = 1.0f;
             env->window_parts++;
             env->mode = MODE_IDLE;
@@ -191,17 +178,12 @@ static inline void c_step(FactoryEnv* env) {
         }
     }
 
-    // 4. Stochastic arrivals into free buffer slots (lock-free per-env PRNG)
     if (env->buf_fast + env->buf_slow < BUF_CAP) {
         float u = rand_uniform(&env->rng);
-        if (u < 0.35f) {
-            env->buf_fast++;
-        } else if (u < 0.60f) {
-            env->buf_slow++;
-        }
+        if (u < 0.35f) env->buf_fast++;
+        else if (u < 0.60f) env->buf_slow++;
     }
 
-    // 5. Rolling KPI logging (continuing task: terminals[0] stays 0.0f)
     env->window_ticks++;
     if (env->window_ticks >= LOG_WINDOW) {
         env->log.parts_per_window += (float)env->window_parts;
@@ -216,28 +198,100 @@ static inline void c_step(FactoryEnv* env) {
         env->window_breakdowns = 0;
     }
 
-    // 6. If your environment DOES have a genuine fatal fault:
-    // if (fatal_fault) {
-    //     env->rewards[0] = -10.0f;
-    //     env->terminals[0] = 1.0f;
-    //     reset_internal_state(env); // Preserves rewards[0] and terminals[0]!
-    //     return;
-    // }
-
-    // 7. Write updated observations
     write_observations(env);
 }
 
 #endif // FACTORY_H
 ```
 
+---
+
+## Pattern B: Multi-Agent Lockstep Macro-Step Fleet (`num_agents = N`, `K`-Tick Inner C Physics)
+
+Use this structural pattern when coordinating `N` mobile agents (e.g., AMRs/AGVs/cranes) across multi-hour shifts and charging cycles:
+
+```c
+#define MAX_AGENTS     16
+#define MACRO_K        30        // 30 physical ticks per RL step
+#define FLEET_OBS_DIM  62
+#define FLEET_ACT_DIM  13
+#define TERMINAL_PEN   -100.0f   // Must satisfy |TERMINAL_PEN| > max_step_penalty / (1 - gamma)
+
+// Inside FleetEnv struct (all arrays fixed-size — ZERO malloc in c_step):
+//   int num_agents;
+//   float* observations; // contiguous slab of length num_agents * FLEET_OBS_DIM
+//   int*   actions;      // contiguous slab of length num_agents
+//   float* rewards;      // contiguous slab of length num_agents
+//   float* terminals;    // contiguous slab of length num_agents
+//   int    occ_grid[GRID_W][GRID_H]; // -1 if empty, else agent index a
+//   AgentState agents[MAX_AGENTS];   // (x, y, heading, mode, dwell, battery, next_action)
+//   uint32_t rng;
+
+static inline void fleet_c_step(FleetEnv* env) {
+    // 1. Clear ALL agents' rewards & terminals at the start of every macro-step
+    for (int a = 0; a < env->num_agents; a++) {
+        env->rewards[a] = 0.0f;
+        env->terminals[a] = 0.0f;
+    }
+
+    // 2. Apply policy actions:
+    //    - Idle / charging / parked agents can switch actions immediately (interruptible charging!)
+    //    - Busy agents on a pick/drop mission store actions[a] as next_action (zero idle gap!)
+    apply_macro_actions(env);
+
+    // 3. Advance exact 1-tick physics for MACRO_K ticks
+    float team_reward = 0.0f;
+    int hard_failure = 0;
+
+    for (int sub = 0; sub < MACRO_K; sub++) {
+        // 3a. Stochastic arrivals during active shift; pause & flag stations at BUF_CAP
+        int stalled_stations = step_arrivals_and_stalls(env);
+        if (is_active_shift(env)) {
+            team_reward -= (0.10f / (float)MACRO_K) * (float)stalled_stations;
+        }
+
+        // 3b. Deterministic 1-tick traffic & conflict resolution (PIBT: vertex + no-edge-swap)
+        //     Priority: low-battery-to-charger > loaded > heading-to-pickup > parked (auto-yield)
+        //     Movement ticks drain battery -= 1; turns/dwells drain 0; chargers add +2.
+        int delivered = 0;
+        if (step_physics_pibt_one_tick(env, &delivered) != 0) {
+            hard_failure = 1; // e.g., an AMR hit 0% battery mid-corridor
+            break;
+        }
+        team_reward += (float)delivered;
+
+        // 3c. Immediately dispatch pre-assigned next_action for any AMR that just finished a drop
+        dispatch_finished_agents_from_preassigned(env);
+        env->tick++;
+    }
+
+    // 4. Write cooperative team reward (or hard terminal penalty) across all N agents
+    if (hard_failure) {
+        for (int a = 0; a < env->num_agents; a++) {
+            env->rewards[a] = TERMINAL_PEN;
+            env->terminals[a] = 1.0f;
+        }
+        reset_internal_fleet_state(env); // Preserves rewards & terminals!
+        return;
+    }
+
+    float per_agent_rew = team_reward / (float)env->num_agents;
+    for (int a = 0; a < env->num_agents; a++) {
+        env->rewards[a] = per_agent_rew;
+        // Write normalized [0, 1] obs slice at env->observations + a * FLEET_OBS_DIM
+        // explicitly zeroing all one-hot slots first!
+        write_agent_observations(env, a);
+    }
+}
+```
+
+---
+
 ## Binding Alignment Rules (`binding.c`)
 
-When wiring `factory.h` into your PufferLib 5.0 `binding.c`:
-1. `#include "factory.h"` and reference `FACTORY_OBS_DIM` and `FACTORY_ACT_DIM` directly (never hardcode magic numbers separately in `binding.c`).
-2. Seed every parallel instance uniquely during initialization:
+1. `#include "<env>.h"` and reference `*_OBS_DIM` and `*_ACT_DIM` directly (never duplicate magic integers in `binding.c`).
+2. Seed every parallel env uniquely during initialization:
    ```c
-   // Inside init loop for factory i:
    env->rng = (uint32_t)(seed + i * 2654435761u + 1u);
    ```
-3. Verify your local PufferLib 5.0 repo's `ocean/<reference_env>/binding.c` (e.g., `squared` or `target`) for the exact `vecenv.h` / Python-binding macro names (`my_init`, `my_log`, `Env` typedef) before compiling.
+3. For multi-agent envs (`num_agents = N`), confirm that `binding.c` allocates/slices `N` agent rows per environment (`env_i` owns `N * OBS_DIM` observation floats and `N` actions/rewards/terminals).

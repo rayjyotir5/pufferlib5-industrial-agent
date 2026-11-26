@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""PufferLib 5.0 Industrial Automation Environment Auditor.
+"""PufferLib 5.0 Industrial Automation Environment Auditor (v1.1.0).
 
 Stdlib-only CLI for static C/binding checks, CPU debug build stamping,
-and non-RL baseline physics-ceiling verification.
+and non-RL baseline physics, demand-ceiling, collision, and anti-suicide verification.
 
 Usage:
   uv run scripts/audit_env.py static-check --env-dir ocean/<env> --output /tmp/static.json
@@ -127,13 +127,11 @@ def cmd_static_check(args: argparse.Namespace) -> int:
         raw = hdr.read_text(encoding="utf-8", errors="replace")
         clean = strip_c_comments(raw)
 
-        # Capture OBS_DIM / ACT_DIM style #defines
         for m in re.finditer(r"#\s*define\s+([A-Z0-9_]*OBS_DIM[A-Z0-9_]*)\s+(\d+)", clean):
             header_obs_macros[m.group(1)] = int(m.group(2))
         for m in re.finditer(r"#\s*define\s+([A-Z0-9_]*ACT_DIM[A-Z0-9_]*)\s+(\d+)", clean):
             header_act_macros[m.group(1)] = int(m.group(2))
 
-        # Check global rand()/srand()/random() anywhere in header
         if re.search(r"\b(?:rand|srand|random|srandom)\s*\(", clean):
             errors.append({
                 "code": "GLOBAL_RAND",
@@ -141,7 +139,6 @@ def cmd_static_check(args: argparse.Namespace) -> int:
                 "message": "Found libc rand()/srand()/random(). Use a lock-free per-env PRNG (e.g., xorshift32(&env->rng)) seeded uniquely per env.",
             })
 
-        # Check c_step invariants
         step_body = extract_function_body(clean, "c_step")
         if step_body is not None:
             found_c_step = True
@@ -151,20 +148,19 @@ def cmd_static_check(args: argparse.Namespace) -> int:
                     "file": hdr.name,
                     "message": "Dynamic memory allocation (malloc/calloc/realloc/free) is forbidden inside c_step.",
                 })
-            if not re.search(r"rewards\s*(?:\[\s*0\s*\]|->|\[[^\]]+\])\s*=\s*0(?:\.0f?)?\s*;", step_body):
+            if not re.search(r"rewards\s*\[[^\]]+\]\s*=\s*0(?:\.0f?)?\s*;", step_body):
                 errors.append({
                     "code": "REWARD_NOT_CLEARED",
                     "file": hdr.name,
                     "message": "c_step must explicitly zero env->rewards[...] = 0.0f at the start of every step to prevent sticky rewards.",
                 })
-            if not re.search(r"terminals\s*(?:\[\s*0\s*\]|->|\[[^\]]+\])\s*=\s*0(?:\.0f?)?\s*;", step_body):
+            if not re.search(r"terminals\s*\[[^\]]+\]\s*=\s*0(?:\.0f?)?\s*;", step_body):
                 errors.append({
                     "code": "TERMINAL_NOT_CLEARED",
                     "file": hdr.name,
                     "message": "c_step must explicitly zero env->terminals[...] = 0.0f at the start of every step.",
                 })
 
-            # Check if c_step calls c_reset directly while c_reset zeroes rewards/terminals
             calls_c_reset = bool(re.search(r"\bc_reset\s*\(", step_body))
             reset_body = extract_function_body(clean, "c_reset")
             if calls_c_reset and reset_body is not None:
@@ -185,7 +181,6 @@ def cmd_static_check(args: argparse.Namespace) -> int:
                     "message": "c_reset assigns a constant literal to env->rng, making all parallel environments identical. Seed uniquely per env_id during initialization.",
                 })
 
-        # Warn if observations are written without any zeroing/memset in header
         if re.search(r"observations\s*\[", clean):
             has_zeroing = bool(
                 re.search(r"memset\s*\([^;]*observations", clean)
@@ -203,7 +198,6 @@ def cmd_static_check(args: argparse.Namespace) -> int:
     if headers and not found_c_reset:
         warnings.append({"code": "MISSING_C_RESET", "message": "Could not find c_reset(...) definition in environment header(s)."})
 
-    # Cross-check binding.c against header OBS_DIM / ACT_DIM if present
     if binding is not None:
         b_clean = strip_c_comments(binding.read_text(encoding="utf-8", errors="replace"))
         if re.search(r"\b(?:rand|srand)\s*\(", b_clean):
@@ -219,7 +213,6 @@ def cmd_static_check(args: argparse.Namespace) -> int:
                 "message": "binding.c assigns a constant literal to env->rng. Seed each parallel env uniquely (e.g., seed + i).",
             })
         for macro_name, val in header_obs_macros.items():
-            # Check if binding.c redefines the same macro with a different value
             m = re.search(rf"#\s*define\s+{re.escape(macro_name)}\s+(\d+)", b_clean)
             if m and int(m.group(1)) != val:
                 errors.append({
@@ -282,7 +275,6 @@ def cmd_record_cpu_pass(args: argparse.Namespace) -> int:
 
     stamp = load_stamp(env_dir)
     if stamp.get("source_hashes") != source_hashes:
-        # Preserve only if hashes match; otherwise reset downstream gates
         stamp = {"source_hashes": source_hashes, "static_check_passed": False, "baselines_passed": False}
 
     stamp["cpu_debug_passed"] = True
@@ -317,18 +309,36 @@ def cmd_check_baselines(args: argparse.Namespace) -> int:
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
 
-    if args.fastest_cycle_ticks <= 0:
-        errors.append({"code": "INVALID_CYCLE", "message": "fastest_cycle_ticks must be > 0."})
-    if args.horizon <= 0:
-        errors.append({"code": "INVALID_HORIZON", "message": "horizon must be > 0."})
-    if args.exit_machines <= 0:
-        errors.append({"code": "INVALID_MACHINES", "message": "exit_machines must be > 0."})
+    cycle_ceiling: float | None = None
+    if args.fastest_cycle_ticks is not None or args.horizon is not None:
+        if args.fastest_cycle_ticks is None or args.horizon is None:
+            errors.append({
+                "code": "INCOMPLETE_CYCLE_ARGS",
+                "message": "Provide both --fastest-cycle-ticks and --horizon together.",
+            })
+        elif args.fastest_cycle_ticks <= 0 or args.horizon <= 0 or args.exit_machines <= 0:
+            errors.append({
+                "code": "INVALID_CYCLE_ARGS",
+                "message": "fastest_cycle_ticks, horizon, and exit_machines must all be > 0.",
+            })
+        else:
+            cycle_ceiling = float(math.floor(args.horizon / args.fastest_cycle_ticks) * args.exit_machines)
 
-    ceiling = (
-        math.floor(args.horizon / args.fastest_cycle_ticks) * args.exit_machines
-        if args.fastest_cycle_ticks > 0 and args.horizon > 0 and args.exit_machines > 0
-        else 0
-    )
+    demand_ceiling: float | None = None
+    if args.demand_ceiling is not None:
+        if args.demand_ceiling <= 0:
+            errors.append({"code": "INVALID_DEMAND_CEILING", "message": "demand_ceiling must be > 0."})
+        else:
+            demand_ceiling = args.demand_ceiling * (1.0 + args.demand_tolerance_pct / 100.0)
+
+    if cycle_ceiling is None and demand_ceiling is None:
+        errors.append({
+            "code": "MISSING_CEILING",
+            "message": "Provide either (--fastest-cycle-ticks and --horizon) or --demand-ceiling (or both).",
+        })
+
+    ceilings = [c for c in (cycle_ceiling, demand_ceiling) if c is not None]
+    effective_ceiling = min(ceilings) if ceilings else 0.0
 
     if abs(args.idle_throughput) > 1e-6:
         errors.append({
@@ -345,21 +355,68 @@ def cmd_check_baselines(args: argparse.Namespace) -> int:
             "code": "OBS_OUT_OF_BOUNDS",
             "message": "Observations exceeded expected normalized bounds. Check normalization and one-hot clearing.",
         })
-    if args.random_throughput > ceiling + 1e-6:
+    if args.collisions > 0:
         errors.append({
-            "code": "RANDOM_EXCEEDS_CEILING",
-            "message": f"Random throughput ({args.random_throughput}) exceeds physical ceiling ({ceiling}). Check for double-counting, off-by-one timers, or sticky rewards.",
+            "code": "COLLISIONS_DETECTED",
+            "message": f"Detected {args.collisions} vertex/edge-swap collision(s) in baseline tests; must be 0.",
         })
-    if args.heuristic_throughput > ceiling + 1e-6:
+    if args.off_limits_intrusions > 0:
         errors.append({
-            "code": "HEURISTIC_EXCEEDS_CEILING",
-            "message": f"Heuristic throughput ({args.heuristic_throughput}) exceeds physical ceiling ({ceiling}). Physics or reward bug confirmed.",
+            "code": "OFF_LIMITS_INTRUSION",
+            "message": f"Detected {args.off_limits_intrusions} intrusion(s) into off-limits vertices; must be 0.",
         })
+
+    if ceilings:
+        if args.random_throughput > effective_ceiling + 1e-6:
+            errors.append({
+                "code": "RANDOM_EXCEEDS_CEILING",
+                "message": f"Random throughput ({args.random_throughput}) exceeds effective ceiling ({effective_ceiling:.2f}). Check for double-counting, off-by-one timers, or sticky rewards.",
+            })
+        if args.heuristic_throughput > effective_ceiling + 1e-6:
+            errors.append({
+                "code": "HEURISTIC_EXCEEDS_CEILING",
+                "message": f"Heuristic throughput ({args.heuristic_throughput}) exceeds effective ceiling ({effective_ceiling:.2f}). Physics or reward bug confirmed.",
+            })
+
     if args.heuristic_throughput < args.random_throughput:
         warnings.append({
             "code": "HEURISTIC_BELOW_RANDOM",
             "message": f"Domain heuristic ({args.heuristic_throughput}) scored below random ({args.random_throughput}); inspect heuristic logic or action mapping.",
         })
+
+    # Optional anti-suicide inequality check: terminal_penalty > max_step_penalty / (1 - gamma)
+    anti_suicide_info: dict[str, Any] | None = None
+    suicide_args = [args.max_step_penalty, args.terminal_penalty, args.gamma]
+    if any(v is not None for v in suicide_args):
+        if not all(v is not None for v in suicide_args):
+            errors.append({
+                "code": "INCOMPLETE_SUICIDE_ARGS",
+                "message": "Anti-suicide check requires --max-step-penalty, --terminal-penalty, and --gamma together.",
+            })
+        elif not (0.0 < args.gamma < 1.0) or args.max_step_penalty < 0 or args.terminal_penalty <= 0:
+            errors.append({
+                "code": "INVALID_SUICIDE_ARGS",
+                "message": "Require 0 < gamma < 1, max_step_penalty >= 0, and terminal_penalty > 0.",
+            })
+        else:
+            worst_case_discounted = args.max_step_penalty / (1.0 - args.gamma)
+            safe = args.terminal_penalty > worst_case_discounted
+            anti_suicide_info = {
+                "max_step_penalty": args.max_step_penalty,
+                "terminal_penalty": args.terminal_penalty,
+                "gamma": args.gamma,
+                "worst_case_discounted_penalties": round(worst_case_discounted, 4),
+                "safe": safe,
+            }
+            if not safe:
+                errors.append({
+                    "code": "SUICIDE_HACK_RISK",
+                    "message": (
+                        f"Terminal penalty magnitude ({args.terminal_penalty}) <= worst-case discounted "
+                        f"ongoing penalties ({worst_case_discounted:.2f} = {args.max_step_penalty}/(1-{args.gamma})). "
+                        "Policy may deliberately trigger hard terminal failure to escape ongoing penalties."
+                    ),
+                })
 
     passed = len(errors) == 0
     source_hashes = compute_source_hashes(env_dir) if env_dir.is_dir() else {}
@@ -370,20 +427,22 @@ def cmd_check_baselines(args: argparse.Namespace) -> int:
             stamp = {"source_hashes": source_hashes, "static_check_passed": False, "cpu_debug_passed": False}
         stamp["baselines_passed"] = True
         stamp["baselines_at"] = datetime.now(timezone.utc).isoformat()
-        stamp["physical_ceiling"] = ceiling
+        stamp["effective_ceiling"] = effective_ceiling
         stamp["benchmark_heuristic_throughput"] = args.heuristic_throughput
         save_stamp(env_dir, stamp)
 
     report = {
         "status": "pass" if passed else "fail",
         "env_dir": str(env_dir),
-        "physical_ceiling": ceiling,
-        "horizon": args.horizon,
-        "fastest_cycle_ticks": args.fastest_cycle_ticks,
-        "exit_machines": args.exit_machines,
+        "cycle_ceiling": cycle_ceiling,
+        "demand_ceiling_with_tolerance": demand_ceiling,
+        "effective_ceiling": effective_ceiling,
         "idle_throughput": args.idle_throughput,
         "random_throughput": args.random_throughput,
         "heuristic_throughput": args.heuristic_throughput,
+        "collisions": args.collisions,
+        "off_limits_intrusions": args.off_limits_intrusions,
+        "anti_suicide": anti_suicide_info,
         "errors": errors,
         "warnings": warnings,
     }
@@ -391,7 +450,7 @@ def cmd_check_baselines(args: argparse.Namespace) -> int:
 
     if passed:
         print(
-            f"PASS: Baselines valid (ceiling={ceiling}, random={args.random_throughput}, "
+            f"PASS: Baselines valid (ceiling={effective_ceiling:.2f}, random={args.random_throughput}, "
             f"heuristic={args.heuristic_throughput}). Report written to: {output_path}"
         )
         return 0
@@ -413,16 +472,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_cpu.add_argument("--output", required=True, help="Path to write JSON report.")
     p_cpu.set_defaults(func=cmd_record_cpu_pass)
 
-    p_base = sub.add_parser("check-baselines", help="Validate idle, random, and heuristic baselines against physical ceiling.")
+    p_base = sub.add_parser("check-baselines", help="Validate idle, random, and heuristic baselines against physical/demand ceilings and safety invariants.")
     p_base.add_argument("--env-dir", required=True, help="Path to ocean/<env> directory.")
-    p_base.add_argument("--fastest-cycle-ticks", type=int, required=True, help="Shortest possible job cycle time (ticks).")
-    p_base.add_argument("--horizon", type=int, required=True, help="Evaluation horizon (ticks), e.g., 1000.")
+    p_base.add_argument("--fastest-cycle-ticks", type=int, default=None, help="Shortest possible job cycle time (ticks) for cycle ceiling.")
+    p_base.add_argument("--horizon", type=int, default=None, help="Evaluation horizon (ticks), e.g., 1000, paired with --fastest-cycle-ticks.")
     p_base.add_argument("--exit-machines", type=int, default=1, help="Number of parallel exit machines (default: 1).")
+    p_base.add_argument("--demand-ceiling", type=float, default=None, help="Mean arrival-rate demand ceiling in same units as throughput (e.g., 330 pallets/hr).")
+    p_base.add_argument("--demand-tolerance-pct", type=float, default=10.0, help="Allowed Poisson variance percentage above --demand-ceiling (default: 10.0).")
     p_base.add_argument("--idle-throughput", type=float, required=True, help="Throughput under always-idle policy.")
     p_base.add_argument("--random-throughput", type=float, required=True, help="Throughput under uniform random policy.")
     p_base.add_argument("--heuristic-throughput", type=float, required=True, help="Throughput under simple domain heuristic.")
     p_base.add_argument("--has-nan", type=parse_bool, required=True, help="Whether any NaN/Inf appeared (true/false).")
     p_base.add_argument("--obs-out-of-bounds", type=parse_bool, required=True, help="Whether any obs left expected bounds (true/false).")
+    p_base.add_argument("--collisions", type=int, default=0, help="Vertex or edge-swap collisions observed in baseline runs (must be 0).")
+    p_base.add_argument("--off-limits-intrusions", type=int, default=0, help="Intrusions into off-limits vertices in baseline runs (must be 0).")
+    p_base.add_argument("--max-step-penalty", type=float, default=None, help="Positive max continuous penalty per agent per step (for anti-suicide check).")
+    p_base.add_argument("--terminal-penalty", type=float, default=None, help="Positive magnitude of hard terminal failure penalty (for anti-suicide check).")
+    p_base.add_argument("--gamma", type=float, default=None, help="PPO discount factor (for anti-suicide check).")
     p_base.add_argument("--output", required=True, help="Path to write JSON report.")
     p_base.set_defaults(func=cmd_check_baselines)
 
