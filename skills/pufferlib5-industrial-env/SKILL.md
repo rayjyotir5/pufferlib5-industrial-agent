@@ -99,8 +99,9 @@ All programmatic verification lives in [scripts/audit_env.py](./scripts/audit_en
 - If any baseline violates physical/demand bounds or produces collisions/deadlocks, **stop and fix `<env>.h` before touching CUDA**.
 
 ### 5. GPU Build & PuffeRL Training
-- Compile `./build.sh <env> --cu` and run `./puffer train <env>` (for fleet sizing, start at a comfortable `N` first, then step `N` down).
-- Monitor `SPS`, `explained_variance`, `clipfrac`, and `entropy` using [references/pufferl_diagnostics.md](./references/pufferl_diagnostics.md). Use **Protein** for hyperparameter sweeps and **Constellation** for visualizing runs.
+- Compile `./build.sh <env> --cu` and run `./puffer train <env>`.
+- Monitor `SPS`, `explained_variance`, `clipfrac`, and `entropy` using [references/pufferl_diagnostics.md](./references/pufferl_diagnostics.md).
+- **When asset count (`N` AMRs, chargers, buffers) is not fixed and must be minimized:** expose asset counts as runtime env config parameters (using static `MAX_*` caps in C so no recompilation is required) and use **Protein** to sweep asset counts **jointly** with PPO hyperparameters (`learning_rate`, `ent_coef`, $\gamma$). Use a capex-aware OTIF sweep objective (or inspect the `N` vs. throughput/stalls Pareto frontier in **Constellation**) so a tight fleet isn't misjudged due to untuned PPO hyperparameters and Protein doesn't trivially max out `N`.
 
 ### 6. Mandatory Policy & Multi-Day Steady-State Audit
 - Never trust healthy dashboard curves alone. Run `./puffer eval latest` and audit real traces and `Log` KPIs (`delivered_per_hr`, `stalled_station_mins`, `battery_deaths`, `min_soc`, `collisions`).

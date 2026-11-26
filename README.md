@@ -1,4 +1,4 @@
-# PufferLib 5.0 Industrial Automation RL Agent Bundle (`v1.1.0`)
+# PufferLib 5.0 Industrial Automation RL Agent Bundle (`v1.1.1`)
 
 Portable plugin/customization kit that encodes industrial throughput MDP design (single cells, re-entrant lines, and multi-agent AMR fleets with multi-day charging), conservation & intake audits, PufferLib 5.0 C/CUDA memory and lifecycle invariants, automated static/baseline/anti-suicide auditing, a `PreToolUse` GPU-training safety gate, and PuffeRL training + multi-day evaluation diagnostics.
 

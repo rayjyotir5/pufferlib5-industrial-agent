@@ -6,7 +6,7 @@ Follow these rules whenever designing, editing, reviewing, compiling, or trainin
 - Run pen-and-paper **conservation checks** before choosing RL architecture:
   - **Flow / spatial balance:** compute inflows vs. outflows per zone to identify forced deadhead.
   - **Multi-day energy / resource balance:** compare resource consumption per cycle (e.g., battery movement steps, tool wear) against replenishment capacity (e.g., overnight charger-hours). If overnight replenishment cannot cover daily consumption, you **must** model multi-day continuous operation rather than single shifts starting at 100%.
-  - **Outer sweep vs. inner RL action:** treat fleet size `N`, buffer capacities, and charger counts as environment config parameters to sweep—not RL actions.
+  - **Outer sweep vs. inner RL action:** treat fleet size `N`, buffer capacities, and charger counts as environment config parameters to sweep—not RL actions. When asset counts are unknown and must be minimized, expose them as runtime config knobs (backed by fixed `MAX_*` array caps in C) and use PufferLib 5.0's **Protein** to sweep asset counts jointly with PPO hyperparameters (LR, `ent_coef`, $\gamma$), scoring against a capex-penalized OTIF objective and inspecting the asset-count Pareto frontier in **Constellation**.
 - Ask the user to resolve ambiguous factory rules before coding (objective shape, station vs. zone task binding, off-limits cells, deterministic vs. stochastic arrivals, full-buffer stall vs. drop behavior, drop-station absorption, multi-shift continuity, idle/turn/dwell resource drain, and 0%-resource failure rules). Never invent undocumented factory physics.
 
 ## 2. Timescale, Markov State & Action Space

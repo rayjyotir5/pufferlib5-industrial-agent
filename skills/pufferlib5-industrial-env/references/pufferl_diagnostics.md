@@ -14,10 +14,13 @@ Use this reference during **Phases 5 & 6** (`./puffer train` and `./puffer eval 
 | **Policy deliberately crashes battery / triggers hard terminal early** | **Anti-suicide inequality violated:** continuous negative penalties (e.g., line stalls) accumulate worse than the terminal failure penalty ($|P_{\text{term}}| \le \frac{c_{\max}}{1 - \gamma}$). | Shrink per-step stall penalty and/or raise hard-terminal penalty magnitude until $P_{\text{term}} > \frac{c_{\max}}{1 - \gamma}$; verify with `audit_env.py check-baselines`. |
 | **Training loss turns `NaN`** | Out-of-bounds memory write overflowing adjacent agent/factory slices, divide-by-zero in normalization, or corrupted `binding.c` metadata. | Stop GPU training immediately; rebuild with `./build.sh <env> --debug --cpu` and fix the AddressSanitizer line. |
 
-## 2. Automated Tuning & Visualization in PufferLib 5.0
+## 2. Automated Tuning, Asset Sizing (Protein) & Visualization (Constellation)
 - **Inline config overrides:** `./puffer train <env> --train.learning_rate=3e-4 --train.ent_coef=0.02 --train.gamma=0.998` (check exact flags in your checkout via `./puffer train --help`).
-- **Protein:** Cost-aware Bayesian optimizer for sweeping LR, `ent_coef`, and $\gamma$ along the speed vs. score Pareto frontier.
-- **Constellation:** Visualize large multi-run sweeps and copy winning hyperparameter configs.
+- **Protein for hyperparameters *and* optimal asset sizing:**
+  - Use **Protein** (CARBS) to sweep LR, `ent_coef`, and $\gamma$ along the compute-cost vs. score Pareto frontier.
+  - When **asset counts** (e.g., number of AMRs `N`, chargers, or buffer slots) are *not* fixed inputs and you need the **minimum feasible count**, expose them as runtime env config parameters (backed by static `MAX_*` C arrays) and include them in the Protein search space **jointly** with PPO hyperparameters—preventing a small `N` from failing merely due to a bad learning rate.
+  - **Crucial objective guard:** Do *not* optimize raw throughput alone when sweeping `N`, or Protein will trivially pick `MAX_N`. Instead, score runs with a feasibility-gated / capex-penalized objective (e.g., reward hitting target OTIF with `stalls == 0` and `battery_deaths == 0`, minus a small cost per asset `N`) and read the exact `N` vs. OTIF Pareto frontier in **Constellation**.
+- **Constellation:** Visualize large multi-run sweeps (including asset count vs. throughput/stalls/min-SOC point clouds) and copy winning hyperparameter + asset configs directly.
 
 ## 3. Mandatory `./puffer eval latest` & Multi-Day Steady-State Audit
 

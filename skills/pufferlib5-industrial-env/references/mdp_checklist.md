@@ -9,7 +9,7 @@ Before defining observations or actions, run three pen-and-paper checks:
 2. **Flow & spatial conservation:** Sum inflows vs. outflows per physical zone. Any net imbalance forces unavoidable empty deadhead trips that must be included in capacity estimates.
 3. **Multi-day energy / resource conservation:** Compare total energy/resource burned per operating day against off-shift replenishment capacity (e.g., total fleet battery-hours burned vs. `num_chargers × off_shift_hours`).
    - If daily burn exceeds off-shift replenishment, **in-shift replenishment is physically mandatory** and you **must** simulate continuous multi-day cycles (a single shift starting at 100% SOC lets policies cheat by ending the shift empty).
-4. **Outer config sweep vs. inner RL action:** Structural sizing choices (minimum fleet size `N`, buffer capacities, number of chargers) belong as environment config parameters swept across runs—not RL actions.
+4. **Outer config sweep vs. inner RL action (using Protein for asset sizing):** Structural sizing choices (minimum fleet size `N`, buffer capacities, number of chargers) belong as runtime environment config parameters—not RL actions. When optimal asset counts are unknown, size internal C arrays with static `MAX_*` caps and let **Protein** sweep asset counts jointly with PPO hyperparameters (LR, `ent_coef`, $\gamma$) against a capex-penalized OTIF objective, inspecting the `N` vs. OTIF Pareto frontier in **Constellation**.
 
 ## 2. Mandatory Phase 1 Intake Questionnaire
 
